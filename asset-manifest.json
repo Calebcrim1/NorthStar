@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/NorthStar/static/css/main.d2e88fa4.css",
+    "main.js": "/NorthStar/static/js/main.6def786e.js",
+    "static/js/453.633267d7.chunk.js": "/NorthStar/static/js/453.633267d7.chunk.js",
+    "index.html": "/NorthStar/index.html",
+    "main.d2e88fa4.css.map": "/NorthStar/static/css/main.d2e88fa4.css.map",
+    "main.6def786e.js.map": "/NorthStar/static/js/main.6def786e.js.map",
+    "453.633267d7.chunk.js.map": "/NorthStar/static/js/453.633267d7.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.d2e88fa4.css",
+    "static/js/main.6def786e.js"
+  ]
+}
