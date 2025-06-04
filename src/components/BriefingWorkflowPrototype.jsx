@@ -1,11 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, Search, FileText, Brain, CheckCircle, AlertCircle, Loader2, Settings, Moon, Sun, AlertTriangle, Shield, BarChart, Clock, Filter, TrendingUp, Users, Globe, CheckSquare, XCircle, Activity } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronRight, Search, FileText, Brain, CheckCircle, AlertCircle, Loader2, Settings, Moon, Sun, AlertTriangle, Shield, BarChart, Clock, Filter, TrendingUp, Users, Globe, CheckSquare, XCircle, Activity, Upload, FileUp, Eye, Download, Copy, Check } from 'lucide-react';
 
 const BriefingWorkflowPrototype = () => {
   const [darkMode, setDarkMode] = useState(true);
   const [currentStep, setCurrentStep] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showTestResults, setShowTestResults] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState({
+    clientNotes: null,
+    searchTerms: null
+  });
+  const [parsedData, setParsedData] = useState({
+    clientNotes: null,
+    searchTerms: null
+  });
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const fileInputRef = useRef(null);
+  const searchTermsInputRef = useRef(null);
+
   const [workflowData, setWorkflowData] = useState({
     clientName: '',
     clientNotes: '',
@@ -103,12 +116,13 @@ const BriefingWorkflowPrototype = () => {
   ];
 
   const workflowSteps = [
-    { id: 0, name: 'Client Selection', icon: Settings },
-    { id: 1, name: 'Input Collection', icon: FileText },
-    { id: 2, name: 'Client Notes Integration', icon: Brain },
-    { id: 3, name: 'Search String Generation', icon: Search },
-    { id: 4, name: 'Quality Assurance', icon: CheckSquare },
-    { id: 5, name: 'Final Assembly', icon: CheckCircle }
+    { id: 0, name: 'Data Upload', icon: Upload },
+    { id: 1, name: 'Client Selection', icon: Settings },
+    { id: 2, name: 'Input Collection', icon: FileText },
+    { id: 3, name: 'Client Notes Integration', icon: Brain },
+    { id: 4, name: 'Search String Generation', icon: Search },
+    { id: 5, name: 'Quality Assurance', icon: CheckSquare },
+    { id: 6, name: 'Final Assembly', icon: CheckCircle }
   ];
 
   const styles = {
@@ -133,6 +147,129 @@ const BriefingWorkflowPrototype = () => {
     grayBadge: `bg-gray-500 bg-opacity-20 text-gray-400 border border-gray-500 border-opacity-30`
   };
 
+  // File upload handlers
+  const handleFileUpload = async (event, type) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setProcessingStatus(`Processing ${type}...`);
+    setIsProcessing(true);
+
+    try {
+      const text = await file.text();
+      
+      setUploadedFiles(prev => ({
+        ...prev,
+        [type]: { name: file.name, content: text }
+      }));
+
+      // Parse the content based on file type
+      if (type === 'clientNotes') {
+        parseClientNotes(text);
+      } else if (type === 'searchTerms') {
+        parseSearchTerms(text);
+      }
+
+      setProcessingStatus(`${type} processed successfully!`);
+      setTimeout(() => setProcessingStatus(''), 3000);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setProcessingStatus(`Error processing ${type}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Parse client notes to extract key information
+  const parseClientNotes = (content) => {
+    const parsedData = {
+      clientName: '',
+      industry: '',
+      games: [],
+      executives: [],
+      competitors: [],
+      excludedTopics: [],
+      sources: {
+        tier1: [],
+        tier2: [],
+        tier3: [],
+        handSearch: []
+      }
+    };
+
+    // Extract client name
+    const clientMatch = content.match(/Client[:\s]+([^\n]+)/i);
+    if (clientMatch) parsedData.clientName = clientMatch[1].trim();
+
+    // Extract industry
+    const industryMatch = content.match(/Industry[:\s]+([^\n]+)/i);
+    if (industryMatch) parsedData.industry = industryMatch[1].trim();
+
+    // Extract games/products
+    const gamesMatch = content.match(/Games?[:\s]+([^\n]+(?:\n(?!\w+:)[^\n]+)*)/i);
+    if (gamesMatch) {
+      parsedData.games = gamesMatch[1].split(/[,\n]/).map(g => g.trim()).filter(g => g);
+    }
+
+    // Extract competitors
+    const competitorsMatch = content.match(/Competitors?[:\s]+([^\n]+(?:\n(?!\w+:)[^\n]+)*)/i);
+    if (competitorsMatch) {
+      parsedData.competitors = competitorsMatch[1].split(/[,\n]/).map(c => c.trim()).filter(c => c);
+    }
+
+    // Extract excluded topics
+    const excludedMatch = content.match(/Excluded?\s+Topics?[:\s]+([^]+?)(?=\n\w+:|$)/i);
+    if (excludedMatch) {
+      parsedData.excludedTopics = excludedMatch[1].split(/\n/).map(t => t.trim()).filter(t => t && t.length > 3);
+    }
+
+    // Extract sources
+    const tier1Match = content.match(/Tier\s*1[:\s]+([^\n]+)/i);
+    if (tier1Match) {
+      parsedData.sources.tier1 = tier1Match[1].split(/[,]/).map(s => s.trim()).filter(s => s);
+    }
+
+    setParsedData(prev => ({ ...prev, clientNotes: parsedData }));
+    
+    // Auto-populate workflow data if client notes are parsed
+    if (parsedData.clientName) {
+      setWorkflowData(prev => ({
+        ...prev,
+        clientName: parsedData.clientName,
+        industry: parsedData.industry,
+        competitors: parsedData.competitors.map(c => ({ name: c, type: 'direct', priority: 'medium' })),
+        excludedTopics: parsedData.excludedTopics,
+        prioritySources: {
+          ...prev.prioritySources,
+          tier1: parsedData.sources.tier1.length > 0 ? parsedData.sources.tier1 : prev.prioritySources.tier1
+        }
+      }));
+    }
+  };
+
+  // Parse search terms from uploaded file
+  const parseSearchTerms = (content) => {
+    const lines = content.split('\n').filter(line => line.trim());
+    const searchTerms = [];
+    
+    lines.forEach(line => {
+      // Check if it's a boolean search string
+      if (line.includes('AND') || line.includes('OR') || line.includes('NOT') || line.includes('"')) {
+        searchTerms.push(line.trim());
+      }
+    });
+
+    setParsedData(prev => ({ ...prev, searchTerms }));
+    
+    // Add search terms to workflow data
+    if (searchTerms.length > 0) {
+      setWorkflowData(prev => ({
+        ...prev,
+        searchStrings: [...prev.searchStrings, ...searchTerms]
+      }));
+    }
+  };
+
   const handleNextStep = () => {
     if (currentStep < workflowSteps.length - 1) {
       setIsProcessing(true);
@@ -140,9 +277,9 @@ const BriefingWorkflowPrototype = () => {
         setCurrentStep(currentStep + 1);
         setIsProcessing(false);
         
-        if (currentStep === 1) {
+        if (currentStep === 2) {
           simulateClientNotesProcessing();
-        } else if (currentStep === 2) {
+        } else if (currentStep === 3) {
           simulateSearchStringGeneration();
         }
       }, 1500);
@@ -150,122 +287,175 @@ const BriefingWorkflowPrototype = () => {
   };
 
   const simulateClientNotesProcessing = () => {
-    // Process Activision Blizzard client notes
-    if (workflowData.clientName === 'Activision Blizzard') {
+    // Process based on uploaded data or selected client
+    if (parsedData.clientNotes) {
+      // Use parsed data from uploaded file
+      const { games, competitors, excludedTopics } = parsedData.clientNotes;
+      
       setWorkflowData(prev => ({
         ...prev,
         highPriorityKeywords: [
-          'Call of Duty', 
-          'Overwatch', 
-          'World of Warcraft',
-          'Activision Blizzard acquisition',
-          'Bobby Kotick (positive only)',
+          ...games.slice(0, 3),
+          prev.clientName,
           'earnings report',
-          'new game launch'
+          'new launch'
         ],
         mediumPriorityKeywords: [
-          'Hearthstone',
-          'Diablo',
-          'esports',
-          'Blizzard Entertainment',
-          'King Digital',
-          'mobile gaming'
+          ...games.slice(3, 6),
+          'mobile gaming',
+          'esports'
         ],
         lowPriorityKeywords: [
           'game updates',
           'patch notes',
-          'player statistics',
-          'streaming viewership'
+          'player statistics'
         ],
         contextualKeywords: [
-          'Microsoft acquisition',
-          'regulatory approval',
-          'market consolidation',
-          'cloud gaming'
+          'acquisition',
+          'regulatory',
+          'market share'
         ],
         emergingTopics: [
           'AI in gaming',
-          'Web3 gaming',
-          'cross-platform play',
+          'cloud gaming',
           'subscription services'
         ],
-        excludedTopics: activisionClient.excludedTopics,
-        competitors: activisionClient.competitors,
-        prioritySources: activisionClient.prioritySources,
-        temporalParameters: {
-          peakHours: ['6:00 AM PT', '12:00 PM PT', '3:00 PM PT'],
-          updateFrequency: {
-            tier1: 'hourly',
-            tier2: '2-3 hours',
-            tier3: 'daily',
-            handSearch: 'twice daily'
-          },
-          timezone: 'PT'
-        },
-        qualityMetrics: {
-          minRelevanceScore: 85,
-          maxDuplication: 15,
-          balanceTargets: {
-            corporate: 40,
-            product: 35,
-            competitive: 15,
-            industry: 10
-          }
-        },
         historicalInsights: {
-          relevanceScore: 92,
-          topPerformingTopics: ['Call of Duty updates', 'Overwatch League', 'Company acquisitions'],
-          avoidTopics: ['Executive compensation', 'Workplace controversies'],
+          relevanceScore: 88,
+          topPerformingTopics: games.slice(0, 3),
+          avoidTopics: excludedTopics.slice(0, 3),
           engagementMetrics: {
-            avgOpenRate: 78,
-            avgClickRate: 45,
-            topClickedSections: ['Corporate News', 'Game Updates', 'Competitive Intelligence']
+            avgOpenRate: 75,
+            avgClickRate: 42,
+            topClickedSections: ['Corporate News', 'Game Updates']
           }
         }
+      }));
+    } else if (workflowData.clientName === 'Activision Blizzard') {
+      // Use predefined data
+      simulateActivisionProcessing();
+    }
+  };
+
+  const simulateActivisionProcessing = () => {
+    setWorkflowData(prev => ({
+      ...prev,
+      highPriorityKeywords: [
+        'Call of Duty', 
+        'Overwatch', 
+        'World of Warcraft',
+        'Activision Blizzard acquisition',
+        'Bobby Kotick (positive only)',
+        'earnings report',
+        'new game launch'
+      ],
+      mediumPriorityKeywords: [
+        'Hearthstone',
+        'Diablo',
+        'esports',
+        'Blizzard Entertainment',
+        'King Digital',
+        'mobile gaming'
+      ],
+      lowPriorityKeywords: [
+        'game updates',
+        'patch notes',
+        'player statistics',
+        'streaming viewership'
+      ],
+      contextualKeywords: [
+        'Microsoft acquisition',
+        'regulatory approval',
+        'market consolidation',
+        'cloud gaming'
+      ],
+      emergingTopics: [
+        'AI in gaming',
+        'Web3 gaming',
+        'cross-platform play',
+        'subscription services'
+      ],
+      excludedTopics: activisionClient.excludedTopics,
+      competitors: activisionClient.competitors,
+      prioritySources: activisionClient.prioritySources,
+      temporalParameters: {
+        peakHours: ['6:00 AM PT', '12:00 PM PT', '3:00 PM PT'],
+        updateFrequency: {
+          tier1: 'hourly',
+          tier2: '2-3 hours',
+          tier3: 'daily',
+          handSearch: 'twice daily'
+        },
+        timezone: 'PT'
+      },
+      qualityMetrics: {
+        minRelevanceScore: 85,
+        maxDuplication: 15,
+        balanceTargets: {
+          corporate: 40,
+          product: 35,
+          competitive: 15,
+          industry: 10
+        }
+      },
+      historicalInsights: {
+        relevanceScore: 92,
+        topPerformingTopics: ['Call of Duty updates', 'Overwatch League', 'Company acquisitions'],
+        avoidTopics: ['Executive compensation', 'Workplace controversies'],
+        engagementMetrics: {
+          avgOpenRate: 78,
+          avgClickRate: 45,
+          topClickedSections: ['Corporate News', 'Game Updates', 'Competitive Intelligence']
+        }
+      }
+    }));
+  };
+
+  const simulateSearchStringGeneration = () => {
+    // Generate search strings based on uploaded data or selected client
+    const baseSearchStrings = parsedData.searchTerms || [];
+    
+    if (workflowData.clientName) {
+      const generatedStrings = [
+        // Add to existing search terms
+        ...baseSearchStrings,
+        // Generate new ones based on keywords
+        `"${workflowData.clientName}" AND ("earnings" OR "revenue" OR "financial results") AND "2025"`,
+        ...workflowData.highPriorityKeywords.slice(0, 3).map(keyword => 
+          `"${keyword}" AND ("update" OR "launch" OR "announcement") NOT ("controversy" OR "lawsuit")`
+        ),
+        ...workflowData.competitors.slice(0, 3).map(comp => 
+          `"${comp.name}" AND ("market share" OR "earnings" OR "strategy")`
+        )
+      ];
+
+      setWorkflowData(prev => ({
+        ...prev,
+        searchStrings: [...new Set(generatedStrings)] // Remove duplicates
       }));
     }
   };
 
-  const simulateSearchStringGeneration = () => {
-    // Generate comprehensive search strings based on Activision Blizzard profile
-    if (workflowData.clientName === 'Activision Blizzard') {
-      setWorkflowData(prev => ({
-        ...prev,
-        searchStrings: [
-          // Corporate & Executive searches
-          '"Activision Blizzard" AND ("earnings" OR "revenue" OR "financial results") AND "2025"',
-          '"Bobby Kotick" AND ("leadership" OR "strategy" OR "vision" OR "announcement") NOT ("compensation" OR "salary" OR "controversy" OR "lawsuit")',
-          '"Daniel Alegre" AND "Activision" NOT ("compensation" OR "controversy")',
-          '"Activision Blizzard" AND ("Microsoft" OR "acquisition") AND ("update" OR "progress" OR "approval")',
-          
-          // Game-specific searches
-          '"Call of Duty" AND ("Modern Warfare" OR "Warzone" OR "Black Ops") AND ("update" OR "season" OR "launch")',
-          '"Overwatch 2" AND ("patch" OR "hero" OR "season" OR "league" OR "tournament")',
-          '"World of Warcraft" AND ("expansion" OR "subscriber*" OR "patch" OR "classic")',
-          '"Hearthstone" AND ("expansion" OR "tournament" OR "esports" OR "update")',
-          '"Diablo" AND ("Diablo 4" OR "season" OR "update" OR "expansion")',
-          
-          // Esports searches
-          '"Overwatch League" AND ("team" OR "player" OR "standings" OR "tournament")',
-          '"Call of Duty League" AND ("CDL" OR "championship" OR "team" OR "roster")',
-          '"Hearthstone" AND ("tournament" OR "championship" OR "esports")',
-          
-          // Mobile gaming searches
-          '"King Digital" AND ("Candy Crush" OR "revenue" OR "downloads" OR "update")',
-          '"Call of Duty Mobile" AND ("update" OR "season" OR "revenue")',
-          
-          // Competitive intelligence
-          '("Electronic Arts" OR "EA") AND ("earnings" OR "game launch" OR "acquisition") NOT "Activision"',
-          '("Ubisoft" OR "Take-Two" OR "Epic Games") AND ("financial" OR "launch" OR "strategy")',
-          '("PlayStation" OR "Xbox" OR "Nintendo") AND ("exclusive" OR "game pass" OR "subscription")',
-          
-          // Industry trends
-          '"gaming industry" AND ("trend*" OR "forecast" OR "growth") AND ("2025" OR "Q1")',
-          '"cloud gaming" AND ("market" OR "growth" OR "competition") AND "2025"',
-          '"gaming subscription" AND ("growth" OR "market share" OR "forecast")'
-        ]
-      }));
-    }
+  const exportConfiguration = () => {
+    const config = {
+      client: workflowData.clientName,
+      exportDate: new Date().toISOString(),
+      configuration: workflowData,
+      uploadedFiles: {
+        clientNotes: uploadedFiles.clientNotes?.name,
+        searchTerms: uploadedFiles.searchTerms?.name
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${workflowData.clientName.replace(/\s+/g, '-')}-briefing-config.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const StepIndicator = ({ step, index }) => {
@@ -291,9 +481,201 @@ const BriefingWorkflowPrototype = () => {
     );
   };
 
+  const DataUploadStep = () => (
+    <div className="space-y-6">
+      <h3 className="text-xl font-semibold mb-4">Upload Client Data</h3>
+      
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Client Notes Upload */}
+        <div className={styles.card}>
+          <h4 className="font-medium mb-3 flex items-center gap-2">
+            <FileText size={20} className="text-blue-500" />
+            Client Notes
+          </h4>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">
+              Upload a text file containing client information, games, competitors, excluded topics, and sources.
+            </p>
+            
+            <div className={`border-2 border-dashed ${darkMode ? 'border-gray-600' : 'border-gray-300'} rounded-lg p-6 text-center transition-colors hover:border-blue-500`}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.doc,.docx"
+                onChange={(e) => handleFileUpload(e, 'clientNotes')}
+                className="hidden"
+              />
+              
+              {uploadedFiles.clientNotes ? (
+                <div className="space-y-2">
+                  <CheckCircle size={32} className="text-green-500 mx-auto" />
+                  <p className="font-medium">{uploadedFiles.clientNotes.name}</p>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-sm text-blue-500 hover:underline"
+                  >
+                    Replace file
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="cursor-pointer space-y-2"
+                >
+                  <Upload size={32} className="text-gray-400 mx-auto" />
+                  <p className="text-sm">Click to upload client notes</p>
+                </div>
+              )}
+            </div>
+
+            {parsedData.clientNotes && (
+              <div className="mt-4 p-3 bg-green-900/20 rounded-md">
+                <p className="text-sm text-green-400">✓ Parsed: {parsedData.clientNotes.clientName}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {parsedData.clientNotes.games.length} games, {parsedData.clientNotes.competitors.length} competitors
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Search Terms Upload */}
+        <div className={styles.card}>
+          <h4 className="font-medium mb-3 flex items-center gap-2">
+            <Search size={20} className="text-green-500" />
+            Search Terms
+          </h4>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">
+              Upload a file containing Boolean search strings (one per line).
+            </p>
+            
+            <div className={`border-2 border-dashed ${darkMode ? 'border-gray-600' : 'border-gray-300'} rounded-lg p-6 text-center transition-colors hover:border-green-500`}>
+              <input
+                ref={searchTermsInputRef}
+                type="file"
+                accept=".txt,.csv"
+                onChange={(e) => handleFileUpload(e, 'searchTerms')}
+                className="hidden"
+              />
+              
+              {uploadedFiles.searchTerms ? (
+                <div className="space-y-2">
+                  <CheckCircle size={32} className="text-green-500 mx-auto" />
+                  <p className="font-medium">{uploadedFiles.searchTerms.name}</p>
+                  <button
+                    onClick={() => searchTermsInputRef.current?.click()}
+                    className="text-sm text-blue-500 hover:underline"
+                  >
+                    Replace file
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => searchTermsInputRef.current?.click()}
+                  className="cursor-pointer space-y-2"
+                >
+                  <Upload size={32} className="text-gray-400 mx-auto" />
+                  <p className="text-sm">Click to upload search terms</p>
+                </div>
+              )}
+            </div>
+
+            {parsedData.searchTerms && (
+              <div className="mt-4 p-3 bg-green-900/20 rounded-md">
+                <p className="text-sm text-green-400">✓ Parsed {parsedData.searchTerms.length} search strings</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Sample Format */}
+      <div className={styles.card}>
+        <h4 className="font-medium mb-3 flex items-center gap-2">
+          <Eye size={20} className="text-purple-500" />
+          Expected Format Examples
+        </h4>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-sm font-medium mb-2">Client Notes Format:</p>
+            <div className={styles.codeBlock}>
+              <pre className="text-xs">
+{`Client: Activision Blizzard
+Industry: Video Game Publishing
+Games: Call of Duty, Overwatch, World of Warcraft
+Competitors: EA, Ubisoft, Nintendo
+Excluded Topics:
+- Executive compensation
+- Workplace controversies
+Tier 1 Sources: IGN, GameSpot, Polygon`}
+              </pre>
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-medium mb-2">Search Terms Format:</p>
+            <div className={styles.codeBlock}>
+              <pre className="text-xs">
+{`"Call of Duty" AND ("update" OR "season")
+"Overwatch 2" AND ("patch" OR "hero")
+"gaming industry" AND "2025" NOT "layoffs"`}
+              </pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="flex gap-4 justify-center">
+        <button 
+          onClick={() => {
+            // Use sample data
+            setWorkflowData(prev => ({
+              ...prev,
+              clientName: 'Activision Blizzard',
+              industry: 'Video Game Publishing'
+            }));
+            setCurrentStep(1);
+          }}
+          className={`${styles.button} ${styles.secondaryButton} text-sm`}
+        >
+          Use Sample Data
+        </button>
+        <button 
+          disabled={!uploadedFiles.clientNotes && !uploadedFiles.searchTerms}
+          onClick={() => setCurrentStep(1)}
+          className={`${styles.button} ${styles.primaryButton} text-sm ${
+            (!uploadedFiles.clientNotes && !uploadedFiles.searchTerms) ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
+        >
+          Continue with Uploads
+        </button>
+      </div>
+    </div>
+  );
+
   const ClientSelectionStep = () => (
     <div className="space-y-6">
       <h3 className="text-xl font-semibold mb-4">Select Client Profile</h3>
+      
+      {/* Show parsed client if available */}
+      {parsedData.clientNotes && (
+        <div className={`${styles.card} ring-2 ring-green-500 mb-4`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="font-semibold text-lg flex items-center gap-2">
+                <FileUp size={20} className="text-green-500" />
+                {parsedData.clientNotes.clientName}
+              </h4>
+              <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>{parsedData.clientNotes.industry}</p>
+            </div>
+            <span className={`${styles.badge} ${styles.successBadge}`}>
+              Uploaded Client
+            </span>
+          </div>
+        </div>
+      )}
+      
       <div className="grid gap-4">
         {sampleClients.map(client => (
           <div 
@@ -372,6 +754,28 @@ their relevance to the client:
           </pre>
         </div>
       </div>
+
+      {/* Show uploaded search terms if available */}
+      {parsedData.searchTerms && parsedData.searchTerms.length > 0 && (
+        <div className={`${styles.card} border-green-500 border-opacity-30`}>
+          <h4 className="font-medium mb-3 flex items-center gap-2 text-green-400">
+            <Upload size={20} />
+            Uploaded Search Terms ({parsedData.searchTerms.length})
+          </h4>
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {parsedData.searchTerms.slice(0, 5).map((term, i) => (
+              <div key={i} className={`${styles.codeBlock} text-xs`}>
+                {term}
+              </div>
+            ))}
+            {parsedData.searchTerms.length > 5 && (
+              <p className="text-sm text-gray-400 text-center">
+                ... and {parsedData.searchTerms.length - 5} more
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {workflowData.clientName === 'Activision Blizzard' && (
         <>
@@ -682,6 +1086,25 @@ their relevance to the client:
           </button>
         </div>
         
+        {/* Show uploaded search terms first if available */}
+        {parsedData.searchTerms && parsedData.searchTerms.length > 0 && (
+          <div className="mb-4">
+            <p className="text-sm font-medium mb-2 text-green-400">Uploaded Search Terms</p>
+            <div className="space-y-2">
+              {parsedData.searchTerms.slice(0, 3).map((string, i) => (
+                <div key={`uploaded-${i}`} className={`${styles.codeBlock} hover:bg-opacity-80 transition-colors border-green-500 border-opacity-30`}>
+                  <code className="text-xs">{string}</code>
+                  {showTestResults && (
+                    <div className="mt-2 text-xs text-green-400">
+                      ✓ Custom search string from upload
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {/* Search String Categories */}
         <div className="space-y-4">
           <div>
@@ -711,28 +1134,6 @@ their relevance to the client:
                       ✓ Est. 20-30 results | 88% relevance | Mixed sources
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          <div>
-            <p className="text-sm font-medium mb-2 text-purple-400">Esports Coverage</p>
-            <div className="space-y-2">
-              {workflowData.searchStrings.slice(9, 12).map((string, i) => (
-                <div key={i + 9} className={`${styles.codeBlock} hover:bg-opacity-80 transition-colors`}>
-                  <code className="text-xs">{string}</code>
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          <div>
-            <p className="text-sm font-medium mb-2 text-yellow-400">Competitive Intelligence</p>
-            <div className="space-y-2">
-              {workflowData.searchStrings.slice(14, 17).map((string, i) => (
-                <div key={i + 14} className={`${styles.codeBlock} hover:bg-opacity-80 transition-colors`}>
-                  <code className="text-xs">{string}</code>
                 </div>
               ))}
             </div>
@@ -992,32 +1393,23 @@ Search Queries Being Executed (${workflowData.searchStrings.length} total):
 ${workflowData.searchStrings.map((query, i) => `${i + 1}. ${query}`).join('\n')}
 
 Output Format & Sections:
-1. "Activision Blizzard in the News" - Corporate stories
-2. "Activision" - Activision-specific news
-3. "Blizzard" - Blizzard Entertainment news
-4. "King Digital" - Mobile gaming division
-5. "eSports" - Competitive gaming coverage
-6. "Competitive Intelligence" - Competitor news
-7. "Industry & Policy Update" - Market trends
+1. "${workflowData.clientName} in the News" - Corporate stories
+2. "Product Updates" - Game-specific news
+3. "Competitive Intelligence" - Competitor news
+4. "Industry & Policy Update" - Market trends
 
 Quality Requirements:
 - Minimum Relevance Score: ${workflowData.qualityMetrics.minRelevanceScore}%
 - Maximum Duplication: ${workflowData.qualityMetrics.maxDuplication}%
-- Content Balance: Corporate (${workflowData.qualityMetrics.balanceTargets.corporate}%), 
-  Product (${workflowData.qualityMetrics.balanceTargets.product}%), 
-  Competitive (${workflowData.qualityMetrics.balanceTargets.competitive}%), 
-  Industry (${workflowData.qualityMetrics.balanceTargets.industry}%)
-
-Temporal Execution:
-- Morning Sweep: 6:00 AM PT (overnight + Asia coverage)
-- Midday Update: 12:00 PM PT (breaking news + earnings)
-- Afternoon Check: 3:00 PM PT (market close + West Coast)
-- Hand Search: 10:00 AM + 4:00 PM PT
+- Content Balance: Corporate (${workflowData.qualityMetrics.balanceTargets.corporate || 40}%), 
+  Product (${workflowData.qualityMetrics.balanceTargets.product || 35}%), 
+  Competitive (${workflowData.qualityMetrics.balanceTargets.competitive || 15}%), 
+  Industry (${workflowData.qualityMetrics.balanceTargets.industry || 10}%)
 
 Historical Performance Optimization:
 - Focus on topics with ${workflowData.historicalInsights?.relevanceScore || 'N/A'}% relevance rating
-- Prioritize sections with high engagement: ${workflowData.historicalInsights?.engagementMetrics.topClickedSections.join(', ')}
-- Avoid flagged topics: ${workflowData.historicalInsights?.avoidTopics.join(', ')}`}
+- Prioritize sections with high engagement
+- Avoid flagged topics`}
           </pre>
         </div>
         
@@ -1061,9 +1453,12 @@ Historical Performance Optimization:
                 <FileText size={20} />
                 Preview Sample Briefing
               </button>
-              <button className={`${styles.button} ${styles.secondaryButton} w-full flex items-center justify-center gap-2`}>
-                <BarChart size={20} />
-                View Historical Performance
+              <button 
+                onClick={exportConfiguration}
+                className={`${styles.button} ${styles.secondaryButton} w-full flex items-center justify-center gap-2`}
+              >
+                <Download size={20} />
+                Export Configuration
               </button>
             </div>
           </div>
@@ -1074,12 +1469,13 @@ Historical Performance Optimization:
 
   const renderStepContent = () => {
     switch (currentStep) {
-      case 0: return <ClientSelectionStep />;
-      case 1: return <InputCollectionStep />;
-      case 2: return <ClientNotesIntegrationStep />;
-      case 3: return <SearchStringGenerationStep />;
-      case 4: return <QualityAssuranceStep />;
-      case 5: return <FinalAssemblyStep />;
+      case 0: return <DataUploadStep />;
+      case 1: return <ClientSelectionStep />;
+      case 2: return <InputCollectionStep />;
+      case 3: return <ClientNotesIntegrationStep />;
+      case 4: return <SearchStringGenerationStep />;
+      case 5: return <QualityAssuranceStep />;
+      case 6: return <FinalAssemblyStep />;
       default: return null;
     }
   };
@@ -1144,9 +1540,9 @@ Historical Performance Optimization:
           {currentStep < workflowSteps.length - 1 && (
             <button
               onClick={handleNextStep}
-              disabled={isProcessing || (currentStep === 0 && !workflowData.clientName)}
+              disabled={isProcessing || (currentStep === 1 && !workflowData.clientName)}
               className={`${styles.button} ${styles.primaryButton} flex items-center gap-2 ${
-                (currentStep === 0 && !workflowData.clientName) ? 'opacity-50 cursor-not-allowed' : ''
+                (currentStep === 1 && !workflowData.clientName) ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
               {isProcessing ? (
@@ -1164,12 +1560,26 @@ Historical Performance Optimization:
           )}
         </div>
 
+        {/* Status Messages */}
+        {processingStatus && (
+          <div className={`mt-4 p-3 rounded-md text-center ${
+            processingStatus.includes('Error') 
+              ? 'bg-red-900/20 text-red-400 border border-red-700' 
+              : 'bg-green-900/20 text-green-400 border border-green-700'
+          }`}>
+            {processingStatus}
+          </div>
+        )}
+
         {/* Client Notes Reference */}
-        {workflowData.clientName === 'Activision Blizzard' && currentStep > 0 && (
+        {workflowData.clientName && currentStep > 0 && (
           <div className={`mt-6 ${styles.card} bg-opacity-50`}>
             <p className="text-xs text-center">
               <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
-                Using actual client notes from Activision Blizzard (Last Updated: 4/30/2021) | Enhanced with intelligent search optimization
+                {uploadedFiles.clientNotes 
+                  ? `Using uploaded client notes: ${uploadedFiles.clientNotes.name}` 
+                  : `Using ${workflowData.clientName} template data`}
+                {uploadedFiles.searchTerms && ` | Search terms: ${uploadedFiles.searchTerms.name}`}
               </span>
             </p>
           </div>
