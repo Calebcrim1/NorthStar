@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import EnhancedClientNotesParser, { ClientNotesParser } from './EnhancedClientNotesParser';
 import { ChevronRight, Search, FileText, Brain, CheckCircle, AlertCircle, Loader2, Settings, Moon, Sun, AlertTriangle, Shield, BarChart, Clock, Filter, TrendingUp, Users, Globe, CheckSquare, XCircle, Activity, Upload, FileUp, Eye, Download, Copy, Check } from 'lucide-react';
+import mammoth from 'mammoth';
 
 const BriefingWorkflowPrototype = () => {
   const [darkMode, setDarkMode] = useState(true);
@@ -111,6 +113,18 @@ const BriefingWorkflowPrototype = () => {
   // Sample data for demonstration
   const sampleClients = [
     activisionClient,
+    { 
+      id: 'rackspace', 
+      name: 'Rackspace Technology', 
+      industry: 'Cloud Technology / Managed Services', 
+      status: 'Active',
+      briefingSpecs: {
+        versions: 'Weekly Briefing',
+        length: '10-12 stories',
+        audience: 'Leadership & Comms',
+        schedule: 'Fridays @ 8 AM ET'
+      }
+    },
     { id: 2, name: 'EA Sports', industry: 'Video Game Publishing', status: 'Active' },
     { id: 3, name: 'Netflix Games', industry: 'Entertainment/Gaming', status: 'Active' }
   ];
@@ -156,94 +170,117 @@ const BriefingWorkflowPrototype = () => {
     setIsProcessing(true);
 
     try {
-      const text = await file.text();
-      
-      setUploadedFiles(prev => ({
-        ...prev,
-        [type]: { name: file.name, content: text }
-      }));
-
-      // Parse the content based on file type
-      if (type === 'clientNotes') {
-        parseClientNotes(text);
-      } else if (type === 'searchTerms') {
-        parseSearchTerms(text);
+      // First, check the file size
+      if (file.size > 5000000) { // 5MB limit
+        throw new Error("File too large (max 5MB)");
       }
 
+      // Get file extension
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      let text = '';
+      
+      // Handle different file formats
+      if (fileExtension === 'docx') {
+        // For DOCX documents (newer format)
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        text = result.value;
+      } else if (fileExtension === 'doc') {
+        // For DOC documents (older format)
+        // Just read as text and then clean it up
+        text = await file.text();
+        // Basic cleanup for doc files
+        text = text.replace(/[^\x20-\x7E\r\n]/g, ' ') // Replace non-printable chars
+                 .replace(/\s+/g, ' ')                // Normalize whitespace
+                 .replace(/\r\n|\r|\n/g, '\n');      // Normalize line endings
+      } else {
+        // For text files (.txt, .md, etc.)
+        text = await file.text();
+      }
+      
+      console.log(`File content length: ${text.length} characters`);
+      
+      if (type === 'clientNotes') {
+        try {
+          // Use our parseClientNotes helper
+          const parsedResult = await parseClientNotes(text);
+          console.log('Parser result:', parsedResult);
+          
+          // Set the parsed data in state
+          setParsedData(prev => ({ ...prev, clientNotes: parsedResult }));
+          
+          // Auto-populate workflow data with parsed results
+          setWorkflowData(prev => ({
+            ...prev,
+            clientName: parsedResult.clientName || prev.clientName,
+            industry: parsedResult.industry || prev.industry,
+            competitors: parsedResult.competitors || prev.competitors,
+            excludedTopics: parsedResult.excludedTopics || prev.excludedTopics,
+            prioritySources: parsedResult.sources || prev.prioritySources
+          }));
+        } catch (parseError) {
+          console.error('Parser specific error:', parseError);
+          throw new Error(`Parsing failed: ${parseError.message}`);
+        }
+        
+        // Set the uploaded file info regardless of parsing result
+        setUploadedFiles(prev => ({
+          ...prev,
+          [type]: { name: file.name, content: text }
+        }));
+      } else if (type === 'searchTerms') {
+        // Handle search terms file upload as before
+        setUploadedFiles(prev => ({
+          ...prev,
+          [type]: { name: file.name, content: text }
+        }));
+        parseSearchTerms(text);
+      }
+      
       setProcessingStatus(`${type} processed successfully!`);
       setTimeout(() => setProcessingStatus(''), 3000);
     } catch (error) {
       console.error('Error processing file:', error);
-      setProcessingStatus(`Error processing ${type}`);
+      setProcessingStatus(`Error: ${error.message}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
   // Parse client notes to extract key information
-  const parseClientNotes = (content) => {
-    const parsedData = {
-      clientName: '',
-      industry: '',
-      games: [],
-      executives: [],
-      competitors: [],
-      excludedTopics: [],
-      sources: {
-        tier1: [],
-        tier2: [],
-        tier3: [],
-        handSearch: []
-      }
-    };
+  const parseClientNotes = async (content) => {
+    try {
+      const parser = new ClientNotesParser({
+        clientType: 'auto',
+        enableFuzzyMatching: true
+      });
 
-    // Extract client name
-    const clientMatch = content.match(/Client[:\s]+([^\n]+)/i);
-    if (clientMatch) parsedData.clientName = clientMatch[1].trim();
-
-    // Extract industry
-    const industryMatch = content.match(/Industry[:\s]+([^\n]+)/i);
-    if (industryMatch) parsedData.industry = industryMatch[1].trim();
-
-    // Extract games/products
-    const gamesMatch = content.match(/Games?[:\s]+([^\n]+(?:\n(?!\w+:)[^\n]+)*)/i);
-    if (gamesMatch) {
-      parsedData.games = gamesMatch[1].split(/[,\n]/).map(g => g.trim()).filter(g => g);
-    }
-
-    // Extract competitors
-    const competitorsMatch = content.match(/Competitors?[:\s]+([^\n]+(?:\n(?!\w+:)[^\n]+)*)/i);
-    if (competitorsMatch) {
-      parsedData.competitors = competitorsMatch[1].split(/[,\n]/).map(c => c.trim()).filter(c => c);
-    }
-
-    // Extract excluded topics
-    const excludedMatch = content.match(/Excluded?\s+Topics?[:\s]+([^]+?)(?=\n\w+:|$)/i);
-    if (excludedMatch) {
-      parsedData.excludedTopics = excludedMatch[1].split(/\n/).map(t => t.trim()).filter(t => t && t.length > 3);
-    }
-
-    // Extract sources
-    const tier1Match = content.match(/Tier\s*1[:\s]+([^\n]+)/i);
-    if (tier1Match) {
-      parsedData.sources.tier1 = tier1Match[1].split(/[,]/).map(s => s.trim()).filter(s => s);
-    }
-
-    setParsedData(prev => ({ ...prev, clientNotes: parsedData }));
-    
-    // Auto-populate workflow data if client notes are parsed
-    if (parsedData.clientName) {
-      setWorkflowData(prev => ({
-        ...prev,
-        clientName: parsedData.clientName,
-        industry: parsedData.industry,
-        competitors: parsedData.competitors.map(c => ({ name: c, type: 'direct', priority: 'medium' })),
-        excludedTopics: parsedData.excludedTopics,
-        prioritySources: {
-          ...prev.prioritySources,
-          tier1: parsedData.sources.tier1.length > 0 ? parsedData.sources.tier1 : prev.prioritySources.tier1
-        }
-      }));
+      const result = parser.parse(content);
+      
+      return {
+        clientName: result.data?.clientName || 'Unknown Client',
+        industry: result.data?.industry || '',
+        games: result.data?.games || [],
+        executives: result.data?.executives || [],
+        competitors: result.data?.competitors || [],
+        excludedTopics: result.data?.excludedTopics || [],
+        sources: result.data?.sources || { tier1: [], tier2: [], tier3: [], handSearch: [] },
+        confidence: result.confidence || { overall: 0 },
+        warnings: result.warnings || []
+      };
+    } catch (error) {
+      console.error("Parser error:", error);
+      return {
+        clientName: 'Parsing Error',
+        industry: '',
+        games: [],
+        executives: [],
+        competitors: [],
+        excludedTopics: [],
+        sources: { tier1: [], tier2: [], tier3: [], handSearch: [] },
+        confidence: { overall: 0 },
+        warnings: [{ message: `Failed to parse document: ${error.message}` }]
+      };
     }
   };
 
@@ -288,52 +325,175 @@ const BriefingWorkflowPrototype = () => {
 
   const simulateClientNotesProcessing = () => {
     // Process based on uploaded data or selected client
-    if (parsedData.clientNotes) {
+    if (parsedData.clientNotes && parsedData.clientNotes.clientName) {
       // Use parsed data from uploaded file
-      const { games, competitors, excludedTopics } = parsedData.clientNotes;
+      const { clientName, games, competitors, excludedTopics, sources } = parsedData.clientNotes;
       
-      setWorkflowData(prev => ({
-        ...prev,
-        highPriorityKeywords: [
-          ...games.slice(0, 3),
-          prev.clientName,
-          'earnings report',
-          'new launch'
-        ],
-        mediumPriorityKeywords: [
-          ...games.slice(3, 6),
-          'mobile gaming',
-          'esports'
-        ],
-        lowPriorityKeywords: [
-          'game updates',
-          'patch notes',
-          'player statistics'
-        ],
-        contextualKeywords: [
-          'acquisition',
-          'regulatory',
-          'market share'
-        ],
-        emergingTopics: [
-          'AI in gaming',
-          'cloud gaming',
-          'subscription services'
-        ],
-        historicalInsights: {
-          relevanceScore: 88,
-          topPerformingTopics: games.slice(0, 3),
-          avoidTopics: excludedTopics.slice(0, 3),
-          engagementMetrics: {
-            avgOpenRate: 75,
-            avgClickRate: 42,
-            topClickedSections: ['Corporate News', 'Game Updates']
+      // Handle different client types
+      if (clientName.toLowerCase().includes('rackspace')) {
+        // Rackspace-specific keywords
+        setWorkflowData(prev => ({
+          ...prev,
+          highPriorityKeywords: [
+            'Rackspace Technology',
+            'cloud services',
+            'managed services',
+            'multi-cloud',
+            'hybrid cloud',
+            'digital transformation'
+          ],
+          mediumPriorityKeywords: [
+            'cloud adoption',
+            'security',
+            'AI',
+            'machine learning',
+            'data analytics',
+            'AWS partnership'
+          ],
+          lowPriorityKeywords: [
+            'technology trends',
+            'cloud migration',
+            'infrastructure'
+          ],
+          contextualKeywords: [
+            'COVID-19 impact',
+            'remote work solutions',
+            'cloud security',
+            'compliance'
+          ],
+          emergingTopics: [
+            'edge computing',
+            'serverless',
+            'kubernetes',
+            'DevOps'
+          ],
+          temporalParameters: {
+            peakHours: ['8:00 AM ET'],
+            updateFrequency: {
+              tier1: 'weekly',
+              tier2: 'weekly',
+              tier3: 'weekly',
+              handSearch: 'weekly'
+            },
+            timezone: 'ET'
+          },
+          historicalInsights: {
+            relevanceScore: 90,
+            topPerformingTopics: ['Rackspace partnerships', 'Cloud industry news', 'Competitive intelligence'],
+            avoidTopics: excludedTopics.slice(0, 3),
+            engagementMetrics: {
+              avgOpenRate: 82,
+              avgClickRate: 48,
+              topClickedSections: ['Rackspace in the News', 'Industry Insights', 'Competitive Intelligence']
+            }
           }
-        }
-      }));
+        }));
+      } else if (games && games.length > 0) {
+        // Gaming company keywords
+        setWorkflowData(prev => ({
+          ...prev,
+          highPriorityKeywords: [
+            ...games.slice(0, 3),
+            prev.clientName,
+            'earnings report',
+            'new launch'
+          ],
+          mediumPriorityKeywords: [
+            ...games.slice(3, 6),
+            'mobile gaming',
+            'esports'
+          ],
+          lowPriorityKeywords: [
+            'game updates',
+            'patch notes',
+            'player statistics'
+          ],
+          contextualKeywords: [
+            'acquisition',
+            'regulatory',
+            'market share'
+          ],
+          emergingTopics: [
+            'AI in gaming',
+            'cloud gaming',
+            'subscription services'
+          ],
+          historicalInsights: {
+            relevanceScore: 88,
+            topPerformingTopics: games.slice(0, 3),
+            avoidTopics: excludedTopics.slice(0, 3),
+            engagementMetrics: {
+              avgOpenRate: 75,
+              avgClickRate: 42,
+              topClickedSections: ['Corporate News', 'Game Updates']
+            }
+          }
+        }));
+      } else {
+        // Generic client keywords
+        setWorkflowData(prev => ({
+          ...prev,
+          highPriorityKeywords: [
+            prev.clientName,
+            'financial results',
+            'partnership',
+            'acquisition',
+            'product launch'
+          ],
+          mediumPriorityKeywords: competitors.slice(0, 5),
+          lowPriorityKeywords: [
+            'industry trends',
+            'market analysis',
+            'technology updates'
+          ],
+          contextualKeywords: [
+            'digital transformation',
+            'innovation',
+            'sustainability'
+          ],
+          emergingTopics: [
+            'AI adoption',
+            'automation',
+            'cybersecurity'
+          ],
+          historicalInsights: {
+            relevanceScore: 85,
+            topPerformingTopics: ['Company news', 'Industry updates', 'Competitive analysis'],
+            avoidTopics: excludedTopics.slice(0, 3),
+            engagementMetrics: {
+              avgOpenRate: 73,
+              avgClickRate: 40,
+              topClickedSections: ['Company News', 'Industry News']
+            }
+          }
+        }));
+      }
     } else if (workflowData.clientName === 'Activision Blizzard') {
       // Use predefined data
       simulateActivisionProcessing();
+    } else if (workflowData.clientName.toLowerCase().includes('rackspace')) {
+      // Handle manually selected Rackspace
+      setWorkflowData(prev => ({
+        ...prev,
+        highPriorityKeywords: [
+          'Rackspace Technology',
+          'cloud services',
+          'managed services',
+          'multi-cloud',
+          'hybrid cloud'
+        ],
+        mediumPriorityKeywords: [
+          'IBM', 'AWS', 'Google Cloud', 'Microsoft Azure', 'digital transformation'
+        ],
+        competitors: [
+          { name: 'IBM', type: 'direct', priority: 'high' },
+          { name: 'Tierpoint', type: 'direct', priority: 'medium' },
+          { name: 'WiPro', type: 'direct', priority: 'medium' },
+          { name: 'Accenture', type: 'consulting', priority: 'high' },
+          { name: 'Cloudreach', type: 'direct', priority: 'medium' },
+          { name: 'DXC', type: 'direct', priority: 'medium' }
+        ]
+      }));
     }
   };
 
@@ -416,18 +576,45 @@ const BriefingWorkflowPrototype = () => {
     const baseSearchStrings = parsedData.searchTerms || [];
     
     if (workflowData.clientName) {
-      const generatedStrings = [
-        // Add to existing search terms
-        ...baseSearchStrings,
-        // Generate new ones based on keywords
-        `"${workflowData.clientName}" AND ("earnings" OR "revenue" OR "financial results") AND "2025"`,
-        ...workflowData.highPriorityKeywords.slice(0, 3).map(keyword => 
-          `"${keyword}" AND ("update" OR "launch" OR "announcement") NOT ("controversy" OR "lawsuit")`
-        ),
-        ...workflowData.competitors.slice(0, 3).map(comp => 
-          `"${comp.name}" AND ("market share" OR "earnings" OR "strategy")`
-        )
-      ];
+      let generatedStrings = [...baseSearchStrings];
+      
+      if (workflowData.clientName.toLowerCase().includes('rackspace')) {
+        // Rackspace-specific search strings
+        generatedStrings = [
+          ...baseSearchStrings,
+          '"Rackspace Technology" AND ("partnership" OR "collaboration" OR "alliance")',
+          '"Rackspace" AND ("cloud services" OR "managed services" OR "multi-cloud")',
+          '"Rackspace" AND ("AWS" OR "Amazon Web Services" OR "Google Cloud" OR "Microsoft Azure")',
+          '("IBM" OR "Tierpoint" OR "WiPro" OR "Accenture" OR "Cloudreach" OR "DXC") AND "cloud services"',
+          '"cloud industry" AND ("trends" OR "forecast" OR "growth") AND "2025"',
+          '"hybrid cloud" OR "multi-cloud" AND ("adoption" OR "strategy" OR "benefits")',
+          '"digital transformation" AND "cloud" AND ("case study" OR "success story")',
+          '"Rackspace" AND ("AI" OR "machine learning" OR "artificial intelligence")'
+        ];
+      } else if (workflowData.highPriorityKeywords.some(k => k.toLowerCase().includes('game'))) {
+        // Gaming company search strings
+        generatedStrings = [
+          ...baseSearchStrings,
+          `"${workflowData.clientName}" AND ("earnings" OR "revenue" OR "financial results") AND "2025"`,
+          ...workflowData.highPriorityKeywords.slice(0, 3).map(keyword => 
+            `"${keyword}" AND ("update" OR "launch" OR "announcement") NOT ("controversy" OR "lawsuit")`
+          ),
+          ...workflowData.competitors.slice(0, 3).map(comp => 
+            `"${comp.name}" AND ("market share" OR "earnings" OR "strategy")`
+          )
+        ];
+      } else {
+        // Generic search strings
+        generatedStrings = [
+          ...baseSearchStrings,
+          `"${workflowData.clientName}" AND ("announcement" OR "news" OR "update")`,
+          `"${workflowData.clientName}" AND ("partnership" OR "collaboration" OR "acquisition")`,
+          `"${workflowData.clientName}" AND ("financial" OR "earnings" OR "revenue")`,
+          ...workflowData.competitors.slice(0, 2).map(comp => 
+            `"${comp.name}" AND "${workflowData.industry}"`
+          )
+        ];
+      }
 
       setWorkflowData(prev => ({
         ...prev,
@@ -494,14 +681,14 @@ const BriefingWorkflowPrototype = () => {
           </h4>
           <div className="space-y-4">
             <p className="text-sm text-gray-400">
-              Upload a text file containing client information, games, competitors, excluded topics, and sources.
+              Upload a text file containing client information, games, competitors, excluded topics, and sources. Supports .txt, .md, .doc, .docx, and .rtf formats.
             </p>
             
             <div className={`border-2 border-dashed ${darkMode ? 'border-gray-600' : 'border-gray-300'} rounded-lg p-6 text-center transition-colors hover:border-blue-500`}>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".txt,.md,.doc,.docx"
+                accept=".txt,.md,.doc,.docx,.rtf"
                 onChange={(e) => handleFileUpload(e, 'clientNotes')}
                 className="hidden"
               />
@@ -532,7 +719,10 @@ const BriefingWorkflowPrototype = () => {
               <div className="mt-4 p-3 bg-green-900/20 rounded-md">
                 <p className="text-sm text-green-400">✓ Parsed: {parsedData.clientNotes.clientName}</p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {parsedData.clientNotes.games.length} games, {parsedData.clientNotes.competitors.length} competitors
+                  {parsedData.clientNotes.industry && `Industry: ${parsedData.clientNotes.industry} | `}
+                  {parsedData.clientNotes.games.length > 0 && `${parsedData.clientNotes.games.length} products, `}
+                  {parsedData.clientNotes.competitors.length} competitors
+                  {parsedData.clientNotes.sources.tier1.length > 0 && `, ${Object.values(parsedData.clientNotes.sources).flat().length} sources`}
                 </p>
               </div>
             )}
@@ -598,17 +788,30 @@ const BriefingWorkflowPrototype = () => {
         </h4>
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <p className="text-sm font-medium mb-2">Client Notes Format:</p>
+            <p className="text-sm font-medium mb-2">Client Notes Format Examples:</p>
             <div className={styles.codeBlock}>
               <pre className="text-xs">
-{`Client: Activision Blizzard
+{`Example 1 - Simple Format:
+Client: Activision Blizzard
 Industry: Video Game Publishing
 Games: Call of Duty, Overwatch, World of Warcraft
 Competitors: EA, Ubisoft, Nintendo
 Excluded Topics:
 - Executive compensation
 - Workplace controversies
-Tier 1 Sources: IGN, GameSpot, Polygon`}
+Tier 1 Sources: IGN, GameSpot, Polygon
+
+Example 2 - Detailed Format:
+Rackspace Client Notes
+Base Information
+Competitive Intelligence: IBM, Tierpoint, 
+WiPro, Accenture, Cloudreach, DXC
+Industry Insights: Top trends related to 
+cloud industry, hybrid cloud, multi-cloud
+Highlighted Sources:
+Bloomberg (BLOOM)
+CRN (CRN)
+Forbes (FORBES)`}
               </pre>
             </div>
           </div>
@@ -622,6 +825,14 @@ Tier 1 Sources: IGN, GameSpot, Polygon`}
               </pre>
             </div>
           </div>
+        </div>
+        <div className={`mt-4 p-3 rounded-md ${
+          darkMode ? 'bg-blue-900/20 border-blue-700' : 'bg-blue-50 border-blue-300'
+        } border`}>
+          <p className="text-sm flex items-center gap-2">
+            <AlertCircle size={16} className="text-blue-500" />
+            <span>The parser will attempt to extract information from various document formats. Complex Word documents may require manual review.</span>
+          </p>
         </div>
       </div>
 
@@ -1393,10 +1604,26 @@ Search Queries Being Executed (${workflowData.searchStrings.length} total):
 ${workflowData.searchStrings.map((query, i) => `${i + 1}. ${query}`).join('\n')}
 
 Output Format & Sections:
-1. "${workflowData.clientName} in the News" - Corporate stories
-2. "Product Updates" - Game-specific news
+${workflowData.clientName.toLowerCase().includes('rackspace') ? 
+`1. "Rackspace Technology In The News" - Corporate stories
+2. "FAIR" - AI by Rackspace content (if applicable)
+3. "OpenStack" - Open standard cloud computing platform
+4. "Key Social Media" - Top Twitter and Most Shared Stories
+5. "Competitive Intelligence" - IBM, Tierpoint, WiPro, etc.
+6. "Industry Insights" - Cloud industry trends
+7. "Policy & Regulatory" - Regulations affecting cloud/tech` :
+workflowData.clientName.toLowerCase().includes('activision') ?
+`1. "Activision Blizzard in the News" - Corporate stories
+2. "Activision" - Activision-specific news
+3. "Blizzard" - Blizzard Entertainment news
+4. "King Digital" - Mobile gaming division
+5. "eSports" - Competitive gaming coverage
+6. "Competitive Intelligence" - Competitor news
+7. "Industry & Policy Update" - Market trends` :
+`1. "${workflowData.clientName} in the News" - Corporate stories
+2. "Product Updates" - Product-specific news
 3. "Competitive Intelligence" - Competitor news
-4. "Industry & Policy Update" - Market trends
+4. "Industry Update" - Market trends`}
 
 Quality Requirements:
 - Minimum Relevance Score: ${workflowData.qualityMetrics.minRelevanceScore}%

@@ -1,5 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, CheckCircle, AlertCircle, Settings, Brain, Zap, Shield, AlertTriangle, TrendingUp, Search, Eye } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Settings, Brain, Zap, Shield, AlertTriangle, TrendingUp, Eye } from 'lucide-react';
+import UniversalDocumentParser from './UniversalDocumentParser';
+import StructureAgnosticParser from './StructureAgnosticParser';
+import IntelligentFieldAssembler from './IntelligentFieldAssembler';
 
 // Enhanced parser with multiple strategies and fuzzy matching
 class ClientNotesParser {
@@ -19,6 +22,9 @@ class ClientNotesParser {
     this.preprocessor = new DocumentPreprocessor();
     this.validator = new ParsingValidator();
     this.fallbackParser = new FallbackParser();
+    this.structureAgnosticParser = new StructureAgnosticParser();
+    this.universalParser = new UniversalDocumentParser();
+    this.fieldAssembler = new IntelligentFieldAssembler();
     
     // Common variations and synonyms for different fields
     this.fieldVariations = {
@@ -86,6 +92,17 @@ class ClientNotesParser {
         requiredFields: ['clientName', 'games', 'executives', 'excludedTopics']
       }
     };
+    
+    // Parsing strategies
+    this.strategies = [
+      this.parseWithPatternMatching.bind(this),
+      this.parseWithSectionDetection.bind(this),
+      this.parseWithKeyValueExtraction.bind(this),
+      this.parseWithContextualAnalysis.bind(this),
+      this.parseWithTemplateMatching.bind(this),
+      this.parseWithContextualUnderstanding.bind(this),
+      this.parseWithStructureAgnostic.bind(this) // Add the new strategy
+    ];
   }
 
   // Main parsing method with multiple strategies
@@ -93,6 +110,23 @@ class ClientNotesParser {
     // Preprocessing with enhanced pipeline
     const preprocessedContent = this.preprocessor.process(content);
     const normalizedContent = this.normalizeContent(preprocessedContent);
+    
+    // Try intelligent extraction first
+    const intelligentResult = this.parseIntelligently(normalizedContent);
+    
+    // If confidence is high enough, use it directly
+    if (intelligentResult && intelligentResult.confidence.overall > 0.7) {
+      return {
+        data: intelligentResult.data,
+        confidence: intelligentResult.confidence,
+        documentType: 'intelligent',
+        validation: this.validator.validate(intelligentResult.data, 'intelligent', this.options.clientType),
+        warnings: this.generateWarnings(intelligentResult.data, intelligentResult.confidence),
+        metadata
+      };
+    }
+    
+    // Otherwise, continue with the existing strategy pipeline
     const documentStructure = this.analyzeDocumentStructure(normalizedContent);
     
     // Check cache for similar documents
@@ -113,16 +147,7 @@ class ClientNotesParser {
     }
     
     // Apply multiple parsing strategies
-    const strategies = [
-      this.parseWithPatternMatching.bind(this),
-      this.parseWithSectionDetection.bind(this),
-      this.parseWithKeyValueExtraction.bind(this),
-      this.parseWithContextualAnalysis.bind(this),
-      this.parseWithTemplateMatching.bind(this)
-    ];
-    
-    // Apply each strategy and merge results
-    for (const strategy of strategies) {
+    for (const strategy of this.strategies) {
       try {
         const strategyResult = strategy(normalizedContent, documentStructure);
         parsedData = this.mergeResults(parsedData, strategyResult);
@@ -130,6 +155,18 @@ class ClientNotesParser {
         console.warn('Strategy failed:', error);
       }
     }
+    
+    // After applying strategies, use the IntelligentFieldAssembler
+    const assembler = new IntelligentFieldAssembler();
+    const sections = this.structureAgnosticParser.identifyNaturalSections(normalizedContent).map(section => ({
+      content: section,
+      type: this.structureAgnosticParser.classifySectionContent(section),
+      entities: this.structureAgnosticParser.extractEntities(section),
+      metadata: this.structureAgnosticParser.extractMetadata(section)
+    }));
+    
+    const assembledFields = assembler.assembleFields(sections);
+    parsedData = this.mergeResults(parsedData, assembledFields);
     
     // Post-processing
     parsedData = this.postProcess(parsedData, normalizedContent);
@@ -169,6 +206,44 @@ class ClientNotesParser {
     }
     
     return result;
+  }
+
+  // Intelligent parsing method using universal parser and field assembler
+  parseIntelligently(content) {
+    try {
+      // 1. Get structural sections
+      const sections = this.structureAgnosticParser.identifyNaturalSections(content);
+      
+      // 2. Analyze each section
+      const analyzedSections = sections.map(section => ({
+        content: section,
+        type: this.structureAgnosticParser.classifySectionContent(section),
+        entities: this.structureAgnosticParser.extractEntities(section),
+        metadata: this.structureAgnosticParser.extractMetadata(section)
+      }));
+      
+      // 3. Extract with universal document parser
+      const universalData = {
+        clientName: this.universalParser.extractWithContext(content, 'client')[0] || '',
+        industry: this.universalParser.extractWithContext(content, 'industry')[0] || '',
+        competitors: this.universalParser.extractWithContext(content, 'competitors'),
+        schedule: this.universalParser.extractWithContext(content, 'schedule')
+      };
+      
+      // 4. Let the field assembler create the final structure
+      const assembledData = this.fieldAssembler.assembleFields([
+        ...analyzedSections,
+        { content: content, type: 'universal', entities: universalData }
+      ]);
+      
+      return {
+        data: assembledData,
+        confidence: assembledData.confidence || { overall: 0.5 }
+      };
+    } catch (error) {
+      console.warn('Intelligent parsing failed:', error);
+      return null;
+    }
   }
 
   // Normalize content for better parsing
@@ -316,7 +391,7 @@ class ClientNotesParser {
     
     // Client name extraction with multiple patterns
     const clientPatterns = [
-      /^([A-Za-z0-9\s&\(\)\.]+?)(?:\s*\([^)]+\))?\s*(?:Client Notes|Client Brief|Notes|Brief)/im,
+      /^([A-Za-z0-9\s&().]+?)(?:\s*\([^)]+\))?\s*(?:Client Notes|Client Brief|Notes|Brief)/im,
       /Client[\s:]+([^\n]+)/i,
       /Customer[\s:]+([^\n]+)/i,
       /Account[\s:]+([^\n]+)/i,
@@ -373,6 +448,9 @@ class ClientNotesParser {
           break;
         case 'sources':
           result.sources = this.extractSources(section.content);
+          break;
+        default:
+          // Handle unknown section types
           break;
       }
     });
@@ -456,6 +534,31 @@ class ClientNotesParser {
     }
     
     return result;
+  }
+
+  // Strategy 6: Contextual understanding
+  parseWithContextualUnderstanding(content) {
+    const result = this.initializeParsedData();
+    const universalParser = new UniversalDocumentParser();
+    
+    // Extract client name with context-aware approach
+    const clientNames = universalParser.extractWithContext(content, 'client');
+    if (clientNames.length > 0) {
+      result.clientName = clientNames[0]; // Use highest ranked result
+    }
+    
+    // Extract competitors with context-aware approach
+    const competitors = universalParser.extractWithContext(content, 'competitors');
+    if (competitors.length > 0) {
+      result.competitors = competitors;
+    }
+    
+    return result;
+  }
+
+  // Strategy 7: Structure-agnostic parsing
+  parseWithStructureAgnostic(content) {
+    return this.structureAgnosticParser.analyzeDocumentStructure(content);
   }
 
   // Helper methods
@@ -961,13 +1064,16 @@ class DocumentPreprocessor {
     // 2. Format conversion
     content = this.convertToPlainText(content);
     
-    // 3. OCR error correction
+    // 3. Process table content - put this BEFORE OCR correction
+    content = this.processTableContent(content);
+    
+    // 4. OCR error correction
     content = this.correctCommonOCRErrors(content);
     
-    // 4. Structure preservation
+    // 5. Structure preservation
     content = this.preserveStructuralElements(content);
     
-    // 5. Remove excessive whitespace while preserving structure
+    // 6. Remove excessive whitespace while preserving structure
     content = this.normalizeWhitespace(content);
     
     return content;
@@ -1019,6 +1125,24 @@ class DocumentPreprocessor {
       .replace(/\t/g, '    ') // Convert tabs to spaces
       .replace(/ +/g, ' ') // Remove multiple spaces
       .replace(/\n{3,}/g, '\n\n'); // Limit consecutive newlines
+  }
+
+  processTableContent(content) {
+    // Extract content from Word tables
+    // Tables in Word docs often appear with | and + characters
+    const tablePattern = /\+[-+]+\+\s*\n([\s\S]*?)\n\+[-+]+\+/g;
+    let processedContent = content;
+    
+    // Convert table rows to key-value pairs
+    processedContent = processedContent.replace(/\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|/g, (match, key, value) => {
+      return `${key.trim()}: ${value.trim()}\n`;
+    });
+    
+    // Remove table borders
+    processedContent = processedContent.replace(/\+[-+]+\+/g, '');
+    processedContent = processedContent.replace(/\|/g, '');
+    
+    return processedContent;
   }
 }
 
@@ -1934,6 +2058,7 @@ export default function EnhancedClientNotesParser() {
                   </div>
                 </div>
 
+                
                 {/* Raw Data View */}
                 <details className="bg-gray-800 rounded-lg p-6">
                   <summary className="cursor-pointer font-semibold text-gray-400 hover:text-gray-200 flex items-center gap-2">
@@ -1952,3 +2077,11 @@ export default function EnhancedClientNotesParser() {
     </div>
   );
 }
+// At the bottom of EnhancedClientNotesParser.jsx, add:
+export { 
+  ClientNotesParser, 
+  DocumentPreprocessor, 
+  ParsingValidator, 
+  ParsingCache, 
+  FallbackParser 
+};
